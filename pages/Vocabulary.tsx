@@ -12,9 +12,11 @@ interface VocabItemWithMeta extends VocabItem {
 
 interface VocabCardProps {
   item: VocabItemWithMeta;
+  onPronounce: (word: string) => void;
+  isSpeaking: boolean;
 }
 
-const VocabCard: React.FC<VocabCardProps> = ({ item }) => {
+const VocabCard: React.FC<VocabCardProps> = ({ item, onPronounce, isSpeaking }) => {
   return (
      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
         {/* Card Header */}
@@ -22,7 +24,13 @@ const VocabCard: React.FC<VocabCardProps> = ({ item }) => {
            <div>
               <div className="flex items-center gap-4 mb-3">
                  <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-slate-900">{item.word}</h1>
-                 <button className="size-10 sm:size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors">
+                 <button
+                   onClick={() => onPronounce(item.word)}
+                   aria-label={`Pronounce ${item.word}`}
+                   className={`size-10 sm:size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center transition-colors ${
+                     isSpeaking ? 'bg-primary/20' : 'hover:bg-primary/20'
+                   }`}
+                 >
                     <Volume2 size={24} />
                  </button>
               </div>
@@ -109,6 +117,7 @@ export const Vocabulary = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -218,6 +227,24 @@ export const Vocabulary = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handlePronounce = (word: string) => {
+    if (!word) return;
+    if (!('speechSynthesis' in window)) {
+      console.warn('Speech Synthesis is not supported in this browser.');
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
   };
 
   return (
@@ -334,7 +361,7 @@ export const Vocabulary = () => {
                 </div>
               </div>
               
-              <VocabCard item={currentItem} />
+              <VocabCard item={currentItem} onPronounce={handlePronounce} isSpeaking={isSpeaking} />
 
               {/* Review Actions (Spaced Repetition) */}
               <div className="mt-8 grid grid-cols-3 gap-4 w-full max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-700 delay-100">
