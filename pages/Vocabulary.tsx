@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Volume2, Bookmark, BookOpen, Search, X, Minus, Check, Loader2, Tag, ChevronRight, Image as ImageIcon, Database } from 'lucide-react';
+import { Volume2, Bookmark, BookOpen, Search, X, Minus, Check, Loader2, Tag, ChevronRight, Image as ImageIcon, Database, Download } from 'lucide-react';
 import { VocabItem } from '../services/ai';
 import { Link } from 'react-router-dom';
 
@@ -165,6 +165,61 @@ export const Vocabulary = () => {
   const learningCount = vocabList.filter(v => v.status === 'learning' || v.status === 'new').length;
   const reviewingCount = vocabList.filter(v => v.status === 'reviewing').length;
 
+  const exportToCsv = () => {
+    if (vocabList.length === 0) return;
+
+    const headers = [
+      'id',
+      'word',
+      'phonetic',
+      'definition',
+      'image_url',
+      'difficulty',
+      'tags',
+      'status',
+      'next_review_at',
+      'examples'
+    ];
+
+    const escapeCsv = (value: string | number | null | undefined) => {
+      const stringValue = value === null || value === undefined ? '' : String(value);
+      const escaped = stringValue.replace(/"/g, '""');
+      return `"${escaped}"`;
+    };
+
+    const rows = vocabList.map(item => {
+      const examples = (item.examples || [])
+        .map(ex => `${ex.en} || ${ex.cn}`)
+        .join(' | ');
+
+      return [
+        item.id,
+        item.word,
+        item.phonetic,
+        item.definition,
+        item.imageUrl || '',
+        item.difficulty,
+        (item.tags || []).join('|'),
+        item.status,
+        item.next_review_at,
+        examples
+      ]
+        .map(escapeCsv)
+        .join(',');
+    });
+
+    const csvContent = [headers.map(escapeCsv).join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'vocabulary_export.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex h-screen bg-[#f6f6f8] overflow-hidden">
        {/* Left Sidebar List */}
@@ -258,6 +313,14 @@ export const Vocabulary = () => {
                     <span className="text-slate-900 font-bold">Flashcards</span>
                 </div>
                 <div className="flex items-center gap-2">
+                    <button
+                      onClick={exportToCsv}
+                      disabled={vocabList.length === 0}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Download size={14} />
+                      Export CSV
+                    </button>
                     <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
                         currentItem.status === 'mastered' ? 'bg-green-100 text-green-700' :
                         currentItem.status === 'reviewing' ? 'bg-orange-100 text-orange-700' :
