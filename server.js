@@ -143,7 +143,7 @@ app.post('/api/vocab/:id/review', async (req, res) => {
       }
 
       let { interval_minutes, review_count } = calculateProgress(progress, quality);
-      let status = quality === 5 ? 'mastered' : (quality === 3 ? 'reviewing' : 'learning');
+      let status = quality === 5 ? 'mastered' : (quality >= 3 ? 'reviewing' : 'learning');
       
       let nextReview = new Date();
       nextReview.setMinutes(nextReview.getMinutes() + interval_minutes);
@@ -175,7 +175,7 @@ app.post('/api/vocab/:id/review', async (req, res) => {
     };
 
     let { interval_minutes, review_count } = calculateProgress(progress, quality);
-    let status = quality === 5 ? 'mastered' : (quality === 3 ? 'reviewing' : 'learning');
+    let status = quality === 5 ? 'mastered' : (quality >= 3 ? 'reviewing' : 'learning');
     
     let nextReview = new Date();
     nextReview.setMinutes(nextReview.getMinutes() + interval_minutes);
@@ -195,8 +195,10 @@ function calculateProgress(current, quality) {
     if (quality === 1) { 
       interval_minutes = 10;
       review_count = 0;
+    } else if (quality === 2) {
+      interval_minutes = Math.max(Math.floor(interval_minutes * 1.1), 60);
     } else if (quality === 3) {
-      interval_minutes = Math.max(Math.floor(interval_minutes * 1.2), 30);
+      interval_minutes = Math.max(Math.floor(interval_minutes * 1.6), 360);
     } else if (quality === 5) {
       if (review_count === 0) interval_minutes = 1440; 
       else if (review_count === 1) interval_minutes = 4320; 
