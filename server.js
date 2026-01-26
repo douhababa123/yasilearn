@@ -2,6 +2,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const OpenAI = require('openai');
 require('dotenv').config();
 
 const app = express();
@@ -15,6 +16,12 @@ app.use(express.json({ limit: '10mb' }));
 const dbConfig = {
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:mysecretpassword@localhost:5432/ielts_db',
 };
+
+// AI Configuration (DashScope/Qwen)
+const aiApiKey = process.env.DASHSCOPE_API_KEY;
+const aiBaseUrl = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+const aiModel = process.env.DASHSCOPE_MODEL || 'qwen3-max';
+const aiClient = aiApiKey ? new OpenAI({ apiKey: aiApiKey, baseURL: aiBaseUrl }) : null;
 
 // --- In-Memory Fallback Store ---
 let isDbConnected = false;
@@ -143,7 +150,7 @@ app.post('/api/vocab/:id/review', async (req, res) => {
       }
 
       let { interval_minutes, review_count } = calculateProgress(progress, quality);
-      let status = quality === 5 ? 'mastered' : (quality === 3 ? 'reviewing' : 'learning');
+      let status = quality === 5 ? 'mastered' : (quality >= 3 ? 'reviewing' : 'learning');
       
       let nextReview = new Date();
       nextReview.setMinutes(nextReview.getMinutes() + interval_minutes);
@@ -175,7 +182,7 @@ app.post('/api/vocab/:id/review', async (req, res) => {
     };
 
     let { interval_minutes, review_count } = calculateProgress(progress, quality);
-    let status = quality === 5 ? 'mastered' : (quality === 3 ? 'reviewing' : 'learning');
+    let status = quality === 5 ? 'mastered' : (quality >= 3 ? 'reviewing' : 'learning');
     
     let nextReview = new Date();
     nextReview.setMinutes(nextReview.getMinutes() + interval_minutes);
@@ -195,8 +202,10 @@ function calculateProgress(current, quality) {
     if (quality === 1) { 
       interval_minutes = 10;
       review_count = 0;
+    } else if (quality === 2) {
+      interval_minutes = Math.max(Math.floor(interval_minutes * 1.1), 60);
     } else if (quality === 3) {
-      interval_minutes = Math.max(Math.floor(interval_minutes * 1.2), 30);
+      interval_minutes = Math.max(Math.floor(interval_minutes * 1.6), 360);
     } else if (quality === 5) {
       if (review_count === 0) interval_minutes = 1440; 
       else if (review_count === 1) interval_minutes = 4320; 
@@ -281,6 +290,101 @@ app.post('/api/vocab/import', async (req, res) => {
         }
     }
     res.json({ success: true, count });
+  }
+});
+
+// 4. AI Memory Insight
+app.post('/api/ai/memory', async (req, res) => {
+  const { word } = req.body || {};
+  if (!word) {
+    return res.status(400).json({ error: 'word is required' });
+  }
+  if (!aiClient) {
+    return res.status(500).json({ error: 'DASHSCOPE_API_KEY is missing' });
+  }
+
+  try {
+    const prompt = `
+      You are an IELTS vocabulary coach. Provide bilingual word-root memory tips and similar word contrasts.
+
+      Word: "${word}"
+
+      Return ONLY valid JSON with the schema:
+      {
+        "rootEn": "string",
+        "rootZh": "string",
+        "memoryHookEn": "string",
+        "memoryHookZh": "string",
+        "similarWords": [
+          { "word": "string", "meaningEn": "string", "meaningZh": "string", "differenceZh": "string" }
+        ],
+        "contrastEn": "string",
+        "contrastZh": "string"
+      }
+    `;
+
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
+      messages: [
+        { role: 'system', content: 'You are an IELTS vocab coach. Output JSON only.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    });
+
+    const content = completion.choices[0].message.content;
+    if (!content) throw new Error('Empty response from Qwen');
+    res.json(JSON.parse(content));
+  } catch (err) {
+    console.error('AI memory error:', err);
+    res.status(500).json({ error: 'AI memory generation failed' });
+  }
+});
+
+// 5. AI Pronunciation Assessment
+app.post('/api/ai/pronunciation', async (req, res) => {
+  const { word, transcript, audioBase64 } = req.body || {};
+  if (!word || !transcript) {
+    return res.status(400).json({ error: 'word and transcript are required' });
+  }
+  if (!aiClient) {
+    return res.status(500).json({ error: 'DASHSCOPE_API_KEY is missing' });
+  }
+
+  try {
+    const prompt = `
+      You are an IELTS pronunciation coach. Evaluate the spoken result based on the target word and ASR transcript.
+
+      Target word: "${word}"
+      Transcript: "${transcript}"
+
+      Return ONLY valid JSON with the schema:
+      {
+        "rating": "bad | poor | ok | good | perfect",
+        "score": number (0-100),
+        "feedbackEn": "string",
+        "feedbackZh": "string",
+        "issuesZh": ["string"]
+      }
+    `;
+
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
+      messages: [
+        { role: 'system', content: 'You are a pronunciation coach. Output JSON only.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+    });
+
+    const content = completion.choices[0].message.content;
+    if (!content) throw new Error('Empty response from Qwen');
+    res.json({ ...JSON.parse(content), audioBase64: audioBase64 ? 'received' : 'none' });
+  } catch (err) {
+    console.error('AI pronunciation error:', err);
+    res.status(500).json({ error: 'AI pronunciation evaluation failed' });
   }
 });
 

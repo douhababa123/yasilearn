@@ -40,6 +40,24 @@ export interface VocabItem {
   difficulty: number; 
 }
 
+export interface WordInsight {
+  rootEn?: string;
+  rootZh?: string;
+  memoryHookEn?: string;
+  memoryHookZh?: string;
+  similarWords?: { word: string; meaningEn: string; meaningZh: string; differenceZh?: string }[];
+  contrastEn?: string;
+  contrastZh?: string;
+}
+
+export interface PronunciationAssessment {
+  rating: 'bad' | 'poor' | 'ok' | 'good' | 'perfect';
+  score: number;
+  feedbackEn: string;
+  feedbackZh: string;
+  issuesZh?: string[];
+}
+
 // --- OpenAI Client Initialization ---
 
 // Initialize using the centralized configuration
@@ -181,3 +199,31 @@ export const parseVocabularyData = async (rawInput: string): Promise<VocabItem[]
     throw error;
   }
 }
+
+export const getWordInsights = async (word: string): Promise<WordInsight> => {
+  const response = await fetch('/api/ai/memory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ word })
+  });
+  if (!response.ok) {
+    throw new Error('Failed to load word insight');
+  }
+  return response.json();
+};
+
+export const evaluatePronunciation = async (
+  word: string,
+  transcript: string,
+  audioBase64?: string | null
+): Promise<PronunciationAssessment> => {
+  const response = await fetch('/api/ai/pronunciation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ word, transcript, audioBase64 })
+  });
+  if (!response.ok) {
+    throw new Error('Failed to evaluate pronunciation');
+  }
+  return response.json();
+};

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Volume2, Bookmark, BookOpen, Search, X, Minus, Check, Loader2, Tag, ChevronRight, Image as ImageIcon, Database } from 'lucide-react';
-import { VocabItem } from '../services/ai';
+import { Volume2, Bookmark, BookOpen, Search, X, Minus, Check, Loader2, Tag, ChevronRight, Image as ImageIcon, Database, Download } from 'lucide-react';
+import { VocabItem, evaluatePronunciation, getWordInsights, PronunciationAssessment, WordInsight } from '../services/ai';
 import { Link } from 'react-router-dom';
 
 // Extend VocabItem to include DB fields
@@ -12,9 +12,48 @@ interface VocabItemWithMeta extends VocabItem {
 
 interface VocabCardProps {
   item: VocabItemWithMeta;
+  onPronounce: (word: string) => void;
+  isSpeaking: boolean;
+  isRevealed: boolean;
+  onToggleReveal: () => void;
+  clozeSentence: string | null;
+  onStartFollowRead: () => void;
+  followReadState: FollowReadState | null;
+  followReadProgress: FollowReadProgress | null;
+  isFollowReading: boolean;
 }
 
-const VocabCard: React.FC<VocabCardProps> = ({ item }) => {
+type FollowReadRating = 'bad' | 'poor' | 'ok' | 'good' | 'perfect';
+
+type FollowReadState = {
+  status: 'idle' | 'listening' | 'processing' | 'done' | 'error';
+  transcript?: string;
+  score?: number;
+  rating?: FollowReadRating;
+  feedback?: string;
+  feedbackZh?: string;
+  error?: string;
+  issues?: string[];
+};
+
+type FollowReadProgress = {
+  previous: FollowReadRating;
+  current: FollowReadRating;
+  improved: boolean;
+};
+
+const VocabCard: React.FC<VocabCardProps> = ({
+  item,
+  onPronounce,
+  isSpeaking,
+  isRevealed,
+  onToggleReveal,
+  clozeSentence,
+  onStartFollowRead,
+  followReadState,
+  followReadProgress,
+  isFollowReading
+}) => {
   return (
      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
         {/* Card Header */}
@@ -22,8 +61,21 @@ const VocabCard: React.FC<VocabCardProps> = ({ item }) => {
            <div>
               <div className="flex items-center gap-4 mb-3">
                  <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-slate-900">{item.word}</h1>
-                 <button className="size-10 sm:size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors">
+                 <button
+                   onClick={() => onPronounce(item.word)}
+                   aria-label={`Pronounce ${item.word}`}
+                   className={`size-10 sm:size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center transition-colors ${
+                     isSpeaking ? 'bg-primary/20' : 'hover:bg-primary/20'
+                   }`}
+                 >
                     <Volume2 size={24} />
+                 </button>
+                 <button
+                   onClick={onStartFollowRead}
+                   disabled={isFollowReading}
+                   className="px-3 py-2 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                 >
+                   {isFollowReading ? '录音中...' : '跟读评分'}
                  </button>
               </div>
               <div className="flex flex-wrap gap-3 items-center">
@@ -48,56 +100,124 @@ const VocabCard: React.FC<VocabCardProps> = ({ item }) => {
         
         <div className="w-full h-px bg-slate-100"></div>
 
-        {/* Definition Area */}
         <div className="px-8 sm:px-10 py-6 bg-white">
-           <div className="flex flex-col sm:flex-row gap-6">
-              <div className="flex-1">
-                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                   <BookOpen size={14} /> Definition
-                 </p>
-                 <p className="text-lg sm:text-xl font-medium text-slate-800 leading-relaxed">
-                   {item.definition}
-                 </p>
-              </div>
-              
-              {/* Image Rendering Logic */}
-              {item.imageUrl && (
-                <div className="shrink-0 w-full sm:w-48 h-32 sm:h-32 rounded-lg bg-slate-100 overflow-hidden border border-slate-200 relative group">
-                  <img 
-                    src={item.imageUrl} 
-                    alt={item.word} 
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors"></div>
-                </div>
-              )}
-           </div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+              Active Recall Mode
+            </div>
+            <button
+              onClick={onToggleReveal}
+              className="px-4 py-2 rounded-full border border-slate-200 bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors"
+            >
+              {isRevealed ? 'Hide Answer' : 'Show Answer'}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-400">Press space to reveal or hide the answer.</p>
         </div>
 
-        {/* Examples Section */}
-        <div className="bg-slate-50 border-t border-slate-100 px-8 sm:px-10 py-8 flex-1">
-           <div className="flex items-center gap-2 mb-4">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Context Examples</span>
-           </div>
-           <div className="space-y-6">
-              {item.examples?.map((ex, idx) => (
-                <div key={idx} className="flex gap-4 group">
-                    <div className="w-1 bg-primary/30 rounded-full group-hover:bg-primary transition-colors shrink-0 mt-1.5 h-full min-h-[40px]"></div>
-                    <div>
-                        <p className="text-base text-slate-700 leading-relaxed mb-1 font-medium">
-                            "{ex.en}"
+        {isRevealed && (
+          <>
+            {followReadState && (
+              <div className="px-8 sm:px-10 py-4 bg-slate-50 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pronunciation Result</p>
+                    {followReadState.status === 'listening' && (
+                      <p className="text-sm text-slate-600 font-medium mt-1">正在录音，请朗读单词…</p>
+                    )}
+                    {followReadState.status === 'processing' && (
+                      <p className="text-sm text-slate-600 font-medium mt-1">正在评估发音…</p>
+                    )}
+                    {followReadState.status === 'done' && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-sm text-slate-700 font-medium">
+                          评分：<span className="font-bold">{followReadState.rating}</span>（{followReadState.score})
                         </p>
-                        <p className="text-sm text-slate-500 font-sans">
-                            {ex.cn}
-                        </p>
+                        {followReadState.transcript && (
+                          <p className="text-xs text-slate-500">识别结果：{followReadState.transcript}</p>
+                        )}
+                        {followReadState.feedback && (
+                          <p className="text-xs text-slate-500">提示：{followReadState.feedback}</p>
+                        )}
+                        {followReadState.feedbackZh && (
+                          <p className="text-xs text-slate-500">中文提示：{followReadState.feedbackZh}</p>
+                        )}
+                        {followReadState.issues && followReadState.issues.length > 0 && (
+                          <p className="text-xs text-slate-500">可能问题：{followReadState.issues.join('、')}</p>
+                        )}
+                      </div>
+                    )}
+                    {followReadState.status === 'error' && (
+                      <p className="text-sm text-red-500 mt-1">{followReadState.error}</p>
+                    )}
+                  </div>
+                  {followReadProgress && (
+                    <div className="text-xs text-slate-500">
+                      变化：{followReadProgress.previous} → {followReadProgress.current}
                     </div>
+                  )}
                 </div>
-              ))}
-           </div>
-        </div>
+              </div>
+            )}
+            {/* Definition Area */}
+            <div className="px-8 sm:px-10 py-6 bg-white">
+               <div className="flex flex-col sm:flex-row gap-6">
+                  <div className="flex-1">
+                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                       <BookOpen size={14} /> Definition
+                     </p>
+                     <p className="text-lg sm:text-xl font-medium text-slate-800 leading-relaxed">
+                       {item.definition}
+                     </p>
+                  </div>
+                  
+                  {/* Image Rendering Logic */}
+                  {item.imageUrl && (
+                    <div className="shrink-0 w-full sm:w-48 h-32 sm:h-32 rounded-lg bg-slate-100 overflow-hidden border border-slate-200 relative group">
+                      <img 
+                        src={item.imageUrl} 
+                        alt={item.word} 
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors"></div>
+                    </div>
+                  )}
+               </div>
+            </div>
+
+            {clozeSentence && (
+              <div className="px-8 sm:px-10 py-4 bg-slate-50 border-t border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Cloze Practice</p>
+                <p className="text-base text-slate-700 font-medium">{clozeSentence}</p>
+              </div>
+            )}
+
+            {/* Examples Section */}
+            <div className="bg-slate-50 border-t border-slate-100 px-8 sm:px-10 py-8 flex-1">
+               <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Context Examples</span>
+               </div>
+               <div className="space-y-6">
+                  {item.examples?.map((ex, idx) => (
+                    <div key={idx} className="flex gap-4 group">
+                        <div className="w-1 bg-primary/30 rounded-full group-hover:bg-primary transition-colors shrink-0 mt-1.5 h-full min-h-[40px]"></div>
+                        <div>
+                            <p className="text-base text-slate-700 leading-relaxed mb-1 font-medium">
+                                "{ex.en}"
+                            </p>
+                            <p className="text-sm text-slate-500 font-sans">
+                                {ex.cn}
+                            </p>
+                        </div>
+                    </div>
+                  ))}
+               </div>
+            </div>
+          </>
+        )}
      </div>
   );
 }
@@ -109,6 +229,14 @@ export const Vocabulary = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isRevealed, setIsRevealed] = useState(false);
+  const [followReadState, setFollowReadState] = useState<FollowReadState | null>(null);
+  const [followReadProgress, setFollowReadProgress] = useState<FollowReadProgress | null>(null);
+  const [wordInsight, setWordInsight] = useState<WordInsight | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState<string | null>(null);
+  const [isFollowReading, setIsFollowReading] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -130,6 +258,30 @@ export const Vocabulary = () => {
       }
     };
     loadData();
+  }, []);
+
+  useEffect(() => {
+    setIsRevealed(false);
+  }, [selectedIndex, searchQuery]);
+
+  useEffect(() => {
+    setFollowReadState(null);
+    setFollowReadProgress(null);
+    setWordInsight(null);
+    setInsightError(null);
+  }, [selectedIndex]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      if (event.code === 'Space') {
+        event.preventDefault();
+        setIsRevealed(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const handleReview = async (quality: number) => {
@@ -164,6 +316,266 @@ export const Vocabulary = () => {
   const masteredCount = vocabList.filter(v => v.status === 'mastered').length;
   const learningCount = vocabList.filter(v => v.status === 'learning' || v.status === 'new').length;
   const reviewingCount = vocabList.filter(v => v.status === 'reviewing').length;
+  const todayDueCount = vocabList.filter(v => !v.next_review_at || new Date(v.next_review_at) <= new Date()).length;
+
+  const exportToCsv = () => {
+    if (vocabList.length === 0) return;
+
+    const headers = [
+      'id',
+      'word',
+      'phonetic',
+      'definition',
+      'image_url',
+      'difficulty',
+      'tags',
+      'status',
+      'next_review_at',
+      'examples'
+    ];
+
+    const escapeCsv = (value: string | number | null | undefined) => {
+      const stringValue = value === null || value === undefined ? '' : String(value);
+      const escaped = stringValue.replace(/"/g, '""');
+      return `"${escaped}"`;
+    };
+
+    const rows = vocabList.map(item => {
+      const examples = (item.examples || [])
+        .map(ex => `${ex.en} || ${ex.cn}`)
+        .join(' | ');
+
+      return [
+        item.id,
+        item.word,
+        item.phonetic,
+        item.definition,
+        item.imageUrl || '',
+        item.difficulty,
+        (item.tags || []).join('|'),
+        item.status,
+        item.next_review_at,
+        examples
+      ]
+        .map(escapeCsv)
+        .join(',');
+    });
+
+    const csvContent = [headers.map(escapeCsv).join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'vocabulary_export.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePronounce = (word: string) => {
+    if (!word) return;
+    if (!('speechSynthesis' in window)) {
+      console.warn('Speech Synthesis is not supported in this browser.');
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const calculateDistance = (a: string, b: string) => {
+    const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  };
+
+  const scorePronunciation = (target: string, transcript: string) => {
+    const normalizedTarget = target.toLowerCase().trim();
+    const normalizedTranscript = transcript.toLowerCase().trim();
+    const distance = calculateDistance(normalizedTarget, normalizedTranscript);
+    const maxLen = Math.max(normalizedTarget.length, normalizedTranscript.length, 1);
+    const score = Math.max(0, Math.round(100 * (1 - distance / maxLen)));
+    let rating: FollowReadRating = 'bad';
+    if (score >= 90) rating = 'perfect';
+    else if (score >= 80) rating = 'good';
+    else if (score >= 65) rating = 'ok';
+    else if (score >= 50) rating = 'poor';
+    else rating = 'bad';
+    return { score, rating };
+  };
+
+  const getHistoryKey = (word: string) => `pronunciationHistory:${word.toLowerCase()}`;
+
+  const updatePronunciationHistory = (word: string, rating: FollowReadRating) => {
+    const key = getHistoryKey(word);
+    const raw = localStorage.getItem(key);
+    const history = raw ? (JSON.parse(raw) as FollowReadRating[]) : [];
+    const hasBad = history.some(entry => entry === 'bad' || entry === 'poor');
+
+    if (rating === 'bad' || rating === 'poor') {
+      history.push(rating);
+      localStorage.setItem(key, JSON.stringify(history));
+      return { previous: rating, current: rating, improved: false };
+    }
+
+    if (hasBad && (rating === 'good' || rating === 'perfect')) {
+      const previous = history[history.length - 1] || 'bad';
+      history.push(rating);
+      localStorage.setItem(key, JSON.stringify(history));
+      return { previous, current: rating, improved: true };
+    }
+
+    return null;
+  };
+
+  const startFollowRead = async () => {
+    const word = currentItem?.word;
+    if (!word) return;
+    if (isFollowReading) return;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setFollowReadState({
+        status: 'error',
+        error: '当前浏览器不支持语音识别，请使用 Chrome 或 Edge。'
+      });
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    setFollowReadState({ status: 'listening' });
+    setIsFollowReading(true);
+
+    let mediaRecorder: MediaRecorder | null = null;
+    let audioChunks: Blob[] = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.push(event.data);
+      };
+      mediaRecorder.start();
+    } catch (err) {
+      console.warn('Audio recording failed:', err);
+    }
+
+    let hasResult = false;
+    recognition.onresult = async (event: any) => {
+      hasResult = true;
+      const transcript = event.results[0][0].transcript;
+      setFollowReadState({ status: 'processing' });
+      let audioBase64: string | null = null;
+      if (mediaRecorder) {
+        mediaRecorder.stop();
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioBase64 = await new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            const base64 = result?.split(',')[1] || null;
+            resolve(base64);
+          };
+          reader.readAsDataURL(audioBlob);
+        });
+      }
+      let assessment: PronunciationAssessment | null = null;
+      try {
+        assessment = await evaluatePronunciation(word, transcript, audioBase64);
+      } catch (err) {
+        console.warn('AI evaluation failed, falling back to local score.', err);
+      }
+      const localScore = scorePronunciation(word, transcript);
+      const rating = assessment?.rating ?? localScore.rating;
+      const score = assessment?.score ?? localScore.score;
+      const progress = updatePronunciationHistory(word, rating);
+      setFollowReadProgress(progress);
+      setFollowReadState({
+        status: 'done',
+        transcript,
+        score,
+        rating,
+        feedback: assessment?.feedbackEn || (rating === 'perfect'
+          ? 'Excellent pronunciation. Keep it up!'
+          : 'Try slowing down and focus on stress.'),
+        feedbackZh: assessment?.feedbackZh || (rating === 'perfect'
+          ? '发音非常标准，保持！'
+          : '可以尝试放慢语速并注意重音。'),
+        issues: assessment?.issuesZh
+      });
+      setIsFollowReading(false);
+    };
+
+    recognition.onerror = () => {
+      setFollowReadState({
+        status: 'error',
+        error: '识别失败，请重试并确保麦克风权限已开启。'
+      });
+      setIsFollowReading(false);
+    };
+
+    recognition.onend = () => {
+      if (!hasResult) {
+        setFollowReadState({
+          status: 'error',
+          error: '未检测到语音输入，请重试。'
+        });
+      }
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      setIsFollowReading(false);
+    };
+
+    recognition.start();
+  };
+
+  const loadWordInsight = async () => {
+    if (!currentItem?.word) return;
+    setInsightLoading(true);
+    setInsightError(null);
+    try {
+      const result = await getWordInsights(currentItem.word);
+      setWordInsight(result);
+    } catch (err) {
+      setInsightError('AI 解析失败，请稍后重试。');
+      console.error(err);
+    } finally {
+      setInsightLoading(false);
+    }
+  };
+
+  const clozeSentence = (() => {
+    const example = currentItem?.examples?.[0]?.en;
+    if (!example || !currentItem?.word) return null;
+    const escapedWord = currentItem.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escapedWord}\\b`, 'i');
+    if (!regex.test(example)) return null;
+    const blank = '_'.repeat(Math.max(currentItem.word.length, 4));
+    return example.replace(regex, blank);
+  })();
 
   return (
     <div className="flex h-screen bg-[#f6f6f8] overflow-hidden">
@@ -258,6 +670,14 @@ export const Vocabulary = () => {
                     <span className="text-slate-900 font-bold">Flashcards</span>
                 </div>
                 <div className="flex items-center gap-2">
+                    <button
+                      onClick={exportToCsv}
+                      disabled={vocabList.length === 0}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Download size={14} />
+                      Export CSV
+                    </button>
                     <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
                         currentItem.status === 'mastered' ? 'bg-green-100 text-green-700' :
                         currentItem.status === 'reviewing' ? 'bg-orange-100 text-orange-700' :
@@ -271,10 +691,21 @@ export const Vocabulary = () => {
                 </div>
               </div>
               
-              <VocabCard item={currentItem} />
+              <VocabCard
+                item={currentItem}
+                onPronounce={handlePronounce}
+                isSpeaking={isSpeaking}
+                isRevealed={isRevealed}
+                onToggleReveal={() => setIsRevealed(prev => !prev)}
+                clozeSentence={clozeSentence}
+                onStartFollowRead={startFollowRead}
+                followReadState={followReadState}
+                followReadProgress={followReadProgress}
+                isFollowReading={isFollowReading}
+              />
 
               {/* Review Actions (Spaced Repetition) */}
-              <div className="mt-8 grid grid-cols-3 gap-4 w-full max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-700 delay-100">
+              <div className="mt-8 grid grid-cols-4 gap-4 w-full max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-700 delay-100">
                 <button 
                     onClick={() => handleReview(1)}
                     disabled={reviewing}
@@ -285,13 +716,22 @@ export const Vocabulary = () => {
                     <span className="text-[10px] opacity-60 mt-1 font-medium">Review &lt;10m</span>
                 </button>
                 <button 
-                    onClick={() => handleReview(3)}
+                    onClick={() => handleReview(2)}
                     disabled={reviewing}
                     className="flex flex-col items-center justify-center p-4 rounded-xl border border-orange-100 bg-white hover:bg-orange-50 text-orange-600 transition-all h-24 active:scale-95 group shadow-sm hover:shadow-md disabled:opacity-50"
                 >
                     <Minus className="mb-1 group-hover:scale-110 transition-transform" />
                     <span className="font-bold text-sm">Hard</span>
-                    <span className="text-[10px] opacity-60 mt-1 font-medium">Review 2h</span>
+                    <span className="text-[10px] opacity-60 mt-1 font-medium">Review 1h</span>
+                </button>
+                <button 
+                    onClick={() => handleReview(3)}
+                    disabled={reviewing}
+                    className="flex flex-col items-center justify-center p-4 rounded-xl border border-blue-100 bg-white hover:bg-blue-50 text-blue-600 transition-all h-24 active:scale-95 group shadow-sm hover:shadow-md disabled:opacity-50"
+                >
+                    <Check className="mb-1 group-hover:scale-110 transition-transform" />
+                    <span className="font-bold text-sm">Good</span>
+                    <span className="text-[10px] opacity-60 mt-1 font-medium">Review 6h</span>
                 </button>
                 <button 
                     onClick={() => handleReview(5)}
@@ -302,6 +742,77 @@ export const Vocabulary = () => {
                     <span className="font-bold text-sm">Easy</span>
                     <span className="text-[10px] opacity-80 mt-1 font-medium">Review 1d</span>
                 </button>
+              </div>
+              <div className="mt-6 w-full max-w-3xl bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-slate-900">词根联想 & 相似词对比</h3>
+                  <button
+                    onClick={loadWordInsight}
+                    disabled={insightLoading}
+                    className="px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {insightLoading ? '生成中...' : 'AI 生成'}
+                  </button>
+                </div>
+                {insightError && <p className="text-xs text-red-500">{insightError}</p>}
+                {wordInsight ? (
+                  <div className="space-y-4 text-sm text-slate-700">
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase">
+                          <tr>
+                            <th className="text-left px-4 py-2 w-32">类别</th>
+                            <th className="text-left px-4 py-2">English</th>
+                            <th className="text-left px-4 py-2">中文</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">词根联想</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.rootEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.rootZh || '-'}</td>
+                          </tr>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">记忆钩子</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.memoryHookEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.memoryHookZh || '-'}</td>
+                          </tr>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">对比学习</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.contrastEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.contrastZh || '-'}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {wordInsight.similarWords?.length > 0 && (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 text-slate-500 uppercase">
+                            <tr>
+                              <th className="text-left px-4 py-2">相似词</th>
+                              <th className="text-left px-4 py-2">英文释义</th>
+                              <th className="text-left px-4 py-2">中文释义</th>
+                              <th className="text-left px-4 py-2">差异点</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {wordInsight.similarWords.map((item, index) => (
+                              <tr key={`${item.word}-${index}`} className="border-t border-slate-100">
+                                <td className="px-4 py-2 font-semibold text-slate-700">{item.word}</td>
+                                <td className="px-4 py-2 text-slate-600">{item.meaningEn}</td>
+                                <td className="px-4 py-2 text-slate-600">{item.meaningZh}</td>
+                                <td className="px-4 py-2 text-slate-500">{item.differenceZh || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">点击“AI 生成”获取词根联想与相似词对比。</p>
+                )}
               </div>
             </>
           )}
@@ -340,6 +851,13 @@ export const Vocabulary = () => {
           
           <div className="space-y-4">
              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Deck Stats</h4>
+             <div className="flex justify-between items-center text-sm border-b border-slate-50 pb-3">
+                 <span className="text-slate-600 flex items-center gap-3">
+                   <div className="w-2 h-2 rounded-full bg-primary ring-4 ring-primary/10"></div>
+                   Today Due
+                 </span>
+                 <span className="font-bold text-slate-900">{todayDueCount}</span>
+             </div>
              {[
                { label: 'Mastered', count: masteredCount, color: 'bg-green-500' },
                { label: 'Learning', count: learningCount, color: 'bg-blue-500' },
