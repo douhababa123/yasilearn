@@ -20,6 +20,7 @@ interface VocabCardProps {
   onStartFollowRead: () => void;
   followReadState: FollowReadState | null;
   followReadProgress: FollowReadProgress | null;
+  isFollowReading: boolean;
 }
 
 type FollowReadRating = 'bad' | 'poor' | 'ok' | 'good' | 'perfect';
@@ -30,6 +31,7 @@ type FollowReadState = {
   score?: number;
   rating?: FollowReadRating;
   feedback?: string;
+  feedbackZh?: string;
   error?: string;
   issues?: string[];
 };
@@ -49,7 +51,8 @@ const VocabCard: React.FC<VocabCardProps> = ({
   clozeSentence,
   onStartFollowRead,
   followReadState,
-  followReadProgress
+  followReadProgress,
+  isFollowReading
 }) => {
   return (
      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -69,9 +72,10 @@ const VocabCard: React.FC<VocabCardProps> = ({
                  </button>
                  <button
                    onClick={onStartFollowRead}
-                   className="px-3 py-2 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                   disabled={isFollowReading}
+                   className="px-3 py-2 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                  >
-                   跟读评分
+                   {isFollowReading ? '录音中...' : '跟读评分'}
                  </button>
               </div>
               <div className="flex flex-wrap gap-3 items-center">
@@ -134,6 +138,9 @@ const VocabCard: React.FC<VocabCardProps> = ({
                         )}
                         {followReadState.feedback && (
                           <p className="text-xs text-slate-500">提示：{followReadState.feedback}</p>
+                        )}
+                        {followReadState.feedbackZh && (
+                          <p className="text-xs text-slate-500">中文提示：{followReadState.feedbackZh}</p>
                         )}
                         {followReadState.issues && followReadState.issues.length > 0 && (
                           <p className="text-xs text-slate-500">可能问题：{followReadState.issues.join('、')}</p>
@@ -229,6 +236,7 @@ export const Vocabulary = () => {
   const [wordInsight, setWordInsight] = useState<WordInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState<string | null>(null);
+  const [isFollowReading, setIsFollowReading] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -439,9 +447,10 @@ export const Vocabulary = () => {
     return null;
   };
 
-  const startFollowRead = () => {
+  const startFollowRead = async () => {
     const word = currentItem?.word;
     if (!word) return;
+    if (isFollowReading) return;
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -458,15 +467,43 @@ export const Vocabulary = () => {
     recognition.maxAlternatives = 1;
 
     setFollowReadState({ status: 'listening' });
+    setIsFollowReading(true);
+
+    let mediaRecorder: MediaRecorder | null = null;
+    let audioChunks: Blob[] = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.push(event.data);
+      };
+      mediaRecorder.start();
+    } catch (err) {
+      console.warn('Audio recording failed:', err);
+    }
 
     let hasResult = false;
     recognition.onresult = async (event: any) => {
       hasResult = true;
       const transcript = event.results[0][0].transcript;
       setFollowReadState({ status: 'processing' });
+      let audioBase64: string | null = null;
+      if (mediaRecorder) {
+        mediaRecorder.stop();
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioBase64 = await new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            const base64 = result?.split(',')[1] || null;
+            resolve(base64);
+          };
+          reader.readAsDataURL(audioBlob);
+        });
+      }
       let assessment: PronunciationAssessment | null = null;
       try {
-        assessment = await evaluatePronunciation(word, transcript);
+        assessment = await evaluatePronunciation(word, transcript, audioBase64);
       } catch (err) {
         console.warn('AI evaluation failed, falling back to local score.', err);
       }
@@ -480,11 +517,15 @@ export const Vocabulary = () => {
         transcript,
         score,
         rating,
-        feedback: assessment?.feedback || (rating === 'perfect'
+        feedback: assessment?.feedbackEn || (rating === 'perfect'
+          ? 'Excellent pronunciation. Keep it up!'
+          : 'Try slowing down and focus on stress.'),
+        feedbackZh: assessment?.feedbackZh || (rating === 'perfect'
           ? '发音非常标准，保持！'
           : '可以尝试放慢语速并注意重音。'),
-        issues: assessment?.issues
+        issues: assessment?.issuesZh
       });
+      setIsFollowReading(false);
     };
 
     recognition.onerror = () => {
@@ -492,6 +533,7 @@ export const Vocabulary = () => {
         status: 'error',
         error: '识别失败，请重试并确保麦克风权限已开启。'
       });
+      setIsFollowReading(false);
     };
 
     recognition.onend = () => {
@@ -501,6 +543,10 @@ export const Vocabulary = () => {
           error: '未检测到语音输入，请重试。'
         });
       }
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      setIsFollowReading(false);
     };
 
     recognition.start();
@@ -655,6 +701,7 @@ export const Vocabulary = () => {
                 onStartFollowRead={startFollowRead}
                 followReadState={followReadState}
                 followReadProgress={followReadProgress}
+                isFollowReading={isFollowReading}
               />
 
               {/* Review Actions (Spaced Repetition) */}
@@ -710,38 +757,56 @@ export const Vocabulary = () => {
                 {insightError && <p className="text-xs text-red-500">{insightError}</p>}
                 {wordInsight ? (
                   <div className="space-y-4 text-sm text-slate-700">
-                    {wordInsight.root && (
-                      <div>
-                        <p className="font-semibold">词根联想</p>
-                        <p className="text-slate-600">{wordInsight.root}</p>
-                        {wordInsight.rootExplanation && (
-                          <p className="text-slate-500 text-xs mt-1">{wordInsight.rootExplanation}</p>
-                        )}
-                      </div>
-                    )}
-                    {wordInsight.memoryHook && (
-                      <div>
-                        <p className="font-semibold">记忆钩子</p>
-                        <p className="text-slate-600">{wordInsight.memoryHook}</p>
-                      </div>
-                    )}
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase">
+                          <tr>
+                            <th className="text-left px-4 py-2 w-32">类别</th>
+                            <th className="text-left px-4 py-2">English</th>
+                            <th className="text-left px-4 py-2">中文</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">词根联想</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.rootEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.rootZh || '-'}</td>
+                          </tr>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">记忆钩子</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.memoryHookEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.memoryHookZh || '-'}</td>
+                          </tr>
+                          <tr className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-semibold">对比学习</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.contrastEn || '-'}</td>
+                            <td className="px-4 py-2 text-slate-600">{wordInsight.contrastZh || '-'}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                     {wordInsight.similarWords?.length > 0 && (
-                      <div>
-                        <p className="font-semibold">相似词对比</p>
-                        <ul className="mt-2 space-y-2">
-                          {wordInsight.similarWords.map((item, index) => (
-                            <li key={`${item.word}-${index}`} className="text-slate-600">
-                              <span className="font-semibold">{item.word}</span>：{item.meaning}
-                              {item.difference && <span className="text-xs text-slate-500">（{item.difference}）</span>}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {wordInsight.contrast && (
-                      <div>
-                        <p className="font-semibold">对比学习</p>
-                        <p className="text-slate-600">{wordInsight.contrast}</p>
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 text-slate-500 uppercase">
+                            <tr>
+                              <th className="text-left px-4 py-2">相似词</th>
+                              <th className="text-left px-4 py-2">英文释义</th>
+                              <th className="text-left px-4 py-2">中文释义</th>
+                              <th className="text-left px-4 py-2">差异点</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {wordInsight.similarWords.map((item, index) => (
+                              <tr key={`${item.word}-${index}`} className="border-t border-slate-100">
+                                <td className="px-4 py-2 font-semibold text-slate-700">{item.word}</td>
+                                <td className="px-4 py-2 text-slate-600">{item.meaningEn}</td>
+                                <td className="px-4 py-2 text-slate-600">{item.meaningZh}</td>
+                                <td className="px-4 py-2 text-slate-500">{item.differenceZh || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
