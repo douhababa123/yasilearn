@@ -40,6 +40,21 @@ export interface VocabItem {
   difficulty: number; 
 }
 
+export interface WordInsight {
+  root?: string;
+  rootExplanation?: string;
+  memoryHook?: string;
+  similarWords?: { word: string; meaning: string; difference?: string }[];
+  contrast?: string;
+}
+
+export interface PronunciationAssessment {
+  rating: 'bad' | 'poor' | 'ok' | 'good' | 'perfect';
+  score: number;
+  feedback: string;
+  issues?: string[];
+}
+
 // --- OpenAI Client Initialization ---
 
 // Initialize using the centralized configuration
@@ -181,3 +196,71 @@ export const parseVocabularyData = async (rawInput: string): Promise<VocabItem[]
     throw error;
   }
 }
+
+export const getWordInsights = async (word: string): Promise<WordInsight> => {
+  if (!AI_CONFIG.apiKey) throw new Error("API Key is missing. Please check .env file.");
+
+  const prompt = `
+    You are an IELTS vocabulary coach. Provide word-root memory tips and similar word contrasts.
+
+    Word: "${word}"
+
+    Return ONLY valid JSON with the schema:
+    {
+      "root": "string (word root / etymology hint)",
+      "rootExplanation": "string (short explanation)",
+      "memoryHook": "string (short mnemonic or association)",
+      "similarWords": [
+        { "word": "string", "meaning": "string", "difference": "string" }
+      ],
+      "contrast": "string (contrast learning summary)"
+    }
+  `;
+
+  const completion = await openai.chat.completions.create({
+    model: AI_CONFIG.modelName,
+    messages: [
+      { role: "system", content: "You are an IELTS vocab coach. Output JSON only." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.3,
+    response_format: { type: "json_object" }
+  });
+
+  const content = completion.choices[0].message.content;
+  if (!content) throw new Error("Empty response from Qwen");
+  return JSON.parse(cleanJson(content)) as WordInsight;
+};
+
+export const evaluatePronunciation = async (word: string, transcript: string): Promise<PronunciationAssessment> => {
+  if (!AI_CONFIG.apiKey) throw new Error("API Key is missing. Please check .env file.");
+
+  const prompt = `
+    You are an IELTS pronunciation coach. Evaluate the spoken result based on the target word and ASR transcript.
+
+    Target word: "${word}"
+    Transcript: "${transcript}"
+
+    Return ONLY valid JSON with the schema:
+    {
+      "rating": "bad | poor | ok | good | perfect",
+      "score": number (0-100),
+      "feedback": "string (short improvement tip)",
+      "issues": ["string (likely mispronounced parts)"]
+    }
+  `;
+
+  const completion = await openai.chat.completions.create({
+    model: AI_CONFIG.modelName,
+    messages: [
+      { role: "system", content: "You are a pronunciation coach. Output JSON only." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.2,
+    response_format: { type: "json_object" }
+  });
+
+  const content = completion.choices[0].message.content;
+  if (!content) throw new Error("Empty response from Qwen");
+  return JSON.parse(cleanJson(content)) as PronunciationAssessment;
+};

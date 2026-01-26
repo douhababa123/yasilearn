@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Volume2, Bookmark, BookOpen, Search, X, Minus, Check, Loader2, Tag, ChevronRight, Image as ImageIcon, Database, Download } from 'lucide-react';
-import { VocabItem } from '../services/ai';
+import { VocabItem, evaluatePronunciation, getWordInsights, PronunciationAssessment, WordInsight } from '../services/ai';
 import { Link } from 'react-router-dom';
 
 // Extend VocabItem to include DB fields
@@ -17,7 +17,28 @@ interface VocabCardProps {
   isRevealed: boolean;
   onToggleReveal: () => void;
   clozeSentence: string | null;
+  onStartFollowRead: () => void;
+  followReadState: FollowReadState | null;
+  followReadProgress: FollowReadProgress | null;
 }
+
+type FollowReadRating = 'bad' | 'poor' | 'ok' | 'good' | 'perfect';
+
+type FollowReadState = {
+  status: 'idle' | 'listening' | 'processing' | 'done' | 'error';
+  transcript?: string;
+  score?: number;
+  rating?: FollowReadRating;
+  feedback?: string;
+  error?: string;
+  issues?: string[];
+};
+
+type FollowReadProgress = {
+  previous: FollowReadRating;
+  current: FollowReadRating;
+  improved: boolean;
+};
 
 const VocabCard: React.FC<VocabCardProps> = ({
   item,
@@ -25,11 +46,11 @@ const VocabCard: React.FC<VocabCardProps> = ({
   isSpeaking,
   isRevealed,
   onToggleReveal,
-  clozeSentence
+  clozeSentence,
+  onStartFollowRead,
+  followReadState,
+  followReadProgress
 }) => {
-}
-
-const VocabCard: React.FC<VocabCardProps> = ({ item, onPronounce, isSpeaking }) => {
   return (
      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
         {/* Card Header */}
@@ -45,6 +66,12 @@ const VocabCard: React.FC<VocabCardProps> = ({ item, onPronounce, isSpeaking }) 
                    }`}
                  >
                     <Volume2 size={24} />
+                 </button>
+                 <button
+                   onClick={onStartFollowRead}
+                   className="px-3 py-2 rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                 >
+                   跟读评分
                  </button>
               </div>
               <div className="flex flex-wrap gap-3 items-center">
@@ -86,6 +113,45 @@ const VocabCard: React.FC<VocabCardProps> = ({ item, onPronounce, isSpeaking }) 
 
         {isRevealed && (
           <>
+            {followReadState && (
+              <div className="px-8 sm:px-10 py-4 bg-slate-50 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pronunciation Result</p>
+                    {followReadState.status === 'listening' && (
+                      <p className="text-sm text-slate-600 font-medium mt-1">正在录音，请朗读单词…</p>
+                    )}
+                    {followReadState.status === 'processing' && (
+                      <p className="text-sm text-slate-600 font-medium mt-1">正在评估发音…</p>
+                    )}
+                    {followReadState.status === 'done' && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-sm text-slate-700 font-medium">
+                          评分：<span className="font-bold">{followReadState.rating}</span>（{followReadState.score})
+                        </p>
+                        {followReadState.transcript && (
+                          <p className="text-xs text-slate-500">识别结果：{followReadState.transcript}</p>
+                        )}
+                        {followReadState.feedback && (
+                          <p className="text-xs text-slate-500">提示：{followReadState.feedback}</p>
+                        )}
+                        {followReadState.issues && followReadState.issues.length > 0 && (
+                          <p className="text-xs text-slate-500">可能问题：{followReadState.issues.join('、')}</p>
+                        )}
+                      </div>
+                    )}
+                    {followReadState.status === 'error' && (
+                      <p className="text-sm text-red-500 mt-1">{followReadState.error}</p>
+                    )}
+                  </div>
+                  {followReadProgress && (
+                    <div className="text-xs text-slate-500">
+                      变化：{followReadProgress.previous} → {followReadProgress.current}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {/* Definition Area */}
             <div className="px-8 sm:px-10 py-6 bg-white">
                <div className="flex flex-col sm:flex-row gap-6">
@@ -158,6 +224,11 @@ export const Vocabulary = () => {
   const [reviewing, setReviewing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isRevealed, setIsRevealed] = useState(false);
+  const [followReadState, setFollowReadState] = useState<FollowReadState | null>(null);
+  const [followReadProgress, setFollowReadProgress] = useState<FollowReadProgress | null>(null);
+  const [wordInsight, setWordInsight] = useState<WordInsight | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -184,6 +255,13 @@ export const Vocabulary = () => {
   useEffect(() => {
     setIsRevealed(false);
   }, [selectedIndex, searchQuery]);
+
+  useEffect(() => {
+    setFollowReadState(null);
+    setFollowReadProgress(null);
+    setWordInsight(null);
+    setInsightError(null);
+  }, [selectedIndex]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -305,6 +383,144 @@ export const Vocabulary = () => {
     window.speechSynthesis.speak(utterance);
   };
 
+  const calculateDistance = (a: string, b: string) => {
+    const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  };
+
+  const scorePronunciation = (target: string, transcript: string) => {
+    const normalizedTarget = target.toLowerCase().trim();
+    const normalizedTranscript = transcript.toLowerCase().trim();
+    const distance = calculateDistance(normalizedTarget, normalizedTranscript);
+    const maxLen = Math.max(normalizedTarget.length, normalizedTranscript.length, 1);
+    const score = Math.max(0, Math.round(100 * (1 - distance / maxLen)));
+    let rating: FollowReadRating = 'bad';
+    if (score >= 90) rating = 'perfect';
+    else if (score >= 80) rating = 'good';
+    else if (score >= 65) rating = 'ok';
+    else if (score >= 50) rating = 'poor';
+    else rating = 'bad';
+    return { score, rating };
+  };
+
+  const getHistoryKey = (word: string) => `pronunciationHistory:${word.toLowerCase()}`;
+
+  const updatePronunciationHistory = (word: string, rating: FollowReadRating) => {
+    const key = getHistoryKey(word);
+    const raw = localStorage.getItem(key);
+    const history = raw ? (JSON.parse(raw) as FollowReadRating[]) : [];
+    const hasBad = history.some(entry => entry === 'bad' || entry === 'poor');
+
+    if (rating === 'bad' || rating === 'poor') {
+      history.push(rating);
+      localStorage.setItem(key, JSON.stringify(history));
+      return { previous: rating, current: rating, improved: false };
+    }
+
+    if (hasBad && (rating === 'good' || rating === 'perfect')) {
+      const previous = history[history.length - 1] || 'bad';
+      history.push(rating);
+      localStorage.setItem(key, JSON.stringify(history));
+      return { previous, current: rating, improved: true };
+    }
+
+    return null;
+  };
+
+  const startFollowRead = () => {
+    const word = currentItem?.word;
+    if (!word) return;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setFollowReadState({
+        status: 'error',
+        error: '当前浏览器不支持语音识别，请使用 Chrome 或 Edge。'
+      });
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    setFollowReadState({ status: 'listening' });
+
+    let hasResult = false;
+    recognition.onresult = async (event: any) => {
+      hasResult = true;
+      const transcript = event.results[0][0].transcript;
+      setFollowReadState({ status: 'processing' });
+      let assessment: PronunciationAssessment | null = null;
+      try {
+        assessment = await evaluatePronunciation(word, transcript);
+      } catch (err) {
+        console.warn('AI evaluation failed, falling back to local score.', err);
+      }
+      const localScore = scorePronunciation(word, transcript);
+      const rating = assessment?.rating ?? localScore.rating;
+      const score = assessment?.score ?? localScore.score;
+      const progress = updatePronunciationHistory(word, rating);
+      setFollowReadProgress(progress);
+      setFollowReadState({
+        status: 'done',
+        transcript,
+        score,
+        rating,
+        feedback: assessment?.feedback || (rating === 'perfect'
+          ? '发音非常标准，保持！'
+          : '可以尝试放慢语速并注意重音。'),
+        issues: assessment?.issues
+      });
+    };
+
+    recognition.onerror = () => {
+      setFollowReadState({
+        status: 'error',
+        error: '识别失败，请重试并确保麦克风权限已开启。'
+      });
+    };
+
+    recognition.onend = () => {
+      if (!hasResult) {
+        setFollowReadState({
+          status: 'error',
+          error: '未检测到语音输入，请重试。'
+        });
+      }
+    };
+
+    recognition.start();
+  };
+
+  const loadWordInsight = async () => {
+    if (!currentItem?.word) return;
+    setInsightLoading(true);
+    setInsightError(null);
+    try {
+      const result = await getWordInsights(currentItem.word);
+      setWordInsight(result);
+    } catch (err) {
+      setInsightError('AI 解析失败，请稍后重试。');
+      console.error(err);
+    } finally {
+      setInsightLoading(false);
+    }
+  };
+
   const clozeSentence = (() => {
     const example = currentItem?.examples?.[0]?.en;
     if (!example || !currentItem?.word) return null;
@@ -314,79 +530,6 @@ export const Vocabulary = () => {
     const blank = '_'.repeat(Math.max(currentItem.word.length, 4));
     return example.replace(regex, blank);
   })();
-
-  const exportToCsv = () => {
-    if (vocabList.length === 0) return;
-
-    const headers = [
-      'id',
-      'word',
-      'phonetic',
-      'definition',
-      'image_url',
-      'difficulty',
-      'tags',
-      'status',
-      'next_review_at',
-      'examples'
-    ];
-
-    const escapeCsv = (value: string | number | null | undefined) => {
-      const stringValue = value === null || value === undefined ? '' : String(value);
-      const escaped = stringValue.replace(/"/g, '""');
-      return `"${escaped}"`;
-    };
-
-    const rows = vocabList.map(item => {
-      const examples = (item.examples || [])
-        .map(ex => `${ex.en} || ${ex.cn}`)
-        .join(' | ');
-
-      return [
-        item.id,
-        item.word,
-        item.phonetic,
-        item.definition,
-        item.imageUrl || '',
-        item.difficulty,
-        (item.tags || []).join('|'),
-        item.status,
-        item.next_review_at,
-        examples
-      ]
-        .map(escapeCsv)
-        .join(',');
-    });
-
-    const csvContent = [headers.map(escapeCsv).join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'vocabulary_export.csv';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const handlePronounce = (word: string) => {
-    if (!word) return;
-    if (!('speechSynthesis' in window)) {
-      console.warn('Speech Synthesis is not supported in this browser.');
-      return;
-    }
-
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(word);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
-  };
 
   return (
     <div className="flex h-screen bg-[#f6f6f8] overflow-hidden">
@@ -509,8 +652,10 @@ export const Vocabulary = () => {
                 isRevealed={isRevealed}
                 onToggleReveal={() => setIsRevealed(prev => !prev)}
                 clozeSentence={clozeSentence}
+                onStartFollowRead={startFollowRead}
+                followReadState={followReadState}
+                followReadProgress={followReadProgress}
               />
-              <VocabCard item={currentItem} onPronounce={handlePronounce} isSpeaking={isSpeaking} />
 
               {/* Review Actions (Spaced Repetition) */}
               <div className="mt-8 grid grid-cols-4 gap-4 w-full max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-700 delay-100">
@@ -550,6 +695,59 @@ export const Vocabulary = () => {
                     <span className="font-bold text-sm">Easy</span>
                     <span className="text-[10px] opacity-80 mt-1 font-medium">Review 1d</span>
                 </button>
+              </div>
+              <div className="mt-6 w-full max-w-3xl bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-slate-900">词根联想 & 相似词对比</h3>
+                  <button
+                    onClick={loadWordInsight}
+                    disabled={insightLoading}
+                    className="px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {insightLoading ? '生成中...' : 'AI 生成'}
+                  </button>
+                </div>
+                {insightError && <p className="text-xs text-red-500">{insightError}</p>}
+                {wordInsight ? (
+                  <div className="space-y-4 text-sm text-slate-700">
+                    {wordInsight.root && (
+                      <div>
+                        <p className="font-semibold">词根联想</p>
+                        <p className="text-slate-600">{wordInsight.root}</p>
+                        {wordInsight.rootExplanation && (
+                          <p className="text-slate-500 text-xs mt-1">{wordInsight.rootExplanation}</p>
+                        )}
+                      </div>
+                    )}
+                    {wordInsight.memoryHook && (
+                      <div>
+                        <p className="font-semibold">记忆钩子</p>
+                        <p className="text-slate-600">{wordInsight.memoryHook}</p>
+                      </div>
+                    )}
+                    {wordInsight.similarWords?.length > 0 && (
+                      <div>
+                        <p className="font-semibold">相似词对比</p>
+                        <ul className="mt-2 space-y-2">
+                          {wordInsight.similarWords.map((item, index) => (
+                            <li key={`${item.word}-${index}`} className="text-slate-600">
+                              <span className="font-semibold">{item.word}</span>：{item.meaning}
+                              {item.difference && <span className="text-xs text-slate-500">（{item.difference}）</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {wordInsight.contrast && (
+                      <div>
+                        <p className="font-semibold">对比学习</p>
+                        <p className="text-slate-600">{wordInsight.contrast}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">点击“AI 生成”获取词根联想与相似词对比。</p>
+                )}
               </div>
             </>
           )}
