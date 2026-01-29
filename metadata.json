@@ -1,0 +1,8 @@
+{
+  "name": "PrepMaster IELTS",
+  "description": "A comprehensive IELTS preparation platform featuring mock tests, AI-driven speaking and writing analysis, vocabulary drills, and progress tracking.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

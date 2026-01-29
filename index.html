@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrepMaster IELTS</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Tailwind Configuration -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
+              display: ['system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
+            },
+            colors: {
+              primary: {
+                DEFAULT: '#135bec',
+                hover: '#0f44b0',
+                light: '#e7ebf3'
+              },
+              secondary: '#0d9488',
+              slate: {
+                850: '#151e2e',
+                900: '#101622',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    
+    <!-- Global Styles -->
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      /* Utilities */
+      .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+      }
+      .scrollbar-hide {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+      }
+      /* Animations */
+      .waveform-bar {
+        animation: wave 1.2s ease-in-out infinite;
+      }
+      @keyframes wave {
+          0%, 100% { height: 20%; opacity: 0.5; }
+          50% { height: 100%; opacity: 1; }
+      }
+    </style>
+  </head>
+  <body class="bg-[#f6f6f8] text-slate-900 antialiased">
+    <div id="root"></div>
+    <!-- Application Entry Point -->
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
